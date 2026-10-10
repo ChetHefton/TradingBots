@@ -132,3 +132,62 @@ def test_monthly_rebalance_sells_dropouts(cfg, tmp_path):
     t.run_daily_cycle(mid_session(FIRST_OF_MONTH), make_session(FIRST_OF_MONTH))
     assert "JNJ" not in broker.positions
     assert any(c.endswith("JNJ-sell-exit") for c in broker.submissions)
+
+
+# ---- regressions from code review -------------------------------------------------
+
+def _meta(stop=90.0):
+    from bot.state import PositionMeta
+    return PositionMeta("2026-09-01", "momentum", stop, "lot", 100.0)
+
+
+def test_stop_cancelled_earlier_today_is_replaced_with_a_new_id(cfg, tmp_path):
+    broker = FakeBroker(positions={"AAPL": BrokerPosition("AAPL", 10, 100.0)})
+    t = make_trader(cfg, tmp_path, broker)
+    t.state.positions["AAPL"] = _meta()
+    t.protect_positions(t.reconcile(MID_MONTH), MID_MONTH)
+    first = broker.get_open_orders()[0]
+    broker.cancel_order(first.id)
+    t.protect_positions(t.reconcile(MID_MONTH), MID_MONTH)
+    open_stops = [o for o in broker.get_open_orders() if o.type == "stop"]
+    assert len(open_stops) == 1 and open_stops[0].client_order_id != first.client_order_id
+
+
+def test_one_rejected_stop_does_not_leave_others_unprotected(cfg, tmp_path):
+    broker = FakeBroker(positions={"AAPL": BrokerPosition("AAPL", 10, 100.0),
+                                   "MSFT": BrokerPosition("MSFT", 5, 100.0)})
+    broker.reject_symbols = {"AAPL"}
+    t = make_trader(cfg, tmp_path, broker)
+    t.state.positions.update(AAPL=_meta(), MSFT=_meta())
+    t.protect_positions(t.reconcile(MID_MONTH), MID_MONTH)
+    assert [o.symbol for o in broker.get_open_orders()] == ["MSFT"]
+
+
+def test_rejected_buy_does_not_count_or_abort_cycle(cfg, tmp_path):
+    broker = FakeBroker()
+    broker.reject_symbols = {"AAPL"}
+    t = make_trader(cfg, tmp_path, broker)
+    t.run_daily_cycle(mid_session(FIRST_OF_MONTH), make_session(FIRST_OF_MONTH))
+    assert set(broker.positions) == {"MSFT", "NVDA", "JPM", "XOM"}
+    assert t.risk.state.orders_today == 4
+    assert t.state.last_cycle_day == FIRST_OF_MONTH.isoformat() and "AAPL" not in t.state.positions
+
+
+def test_open_buy_orders_reserve_cash(cfg, tmp_path):
+    broker = FakeBroker(cash=10_000)
+    broker._add("old-buy", "PG", "buy", "market", 95, "new")  # ~$9,500 not yet filled
+    t = make_trader(cfg, tmp_path, broker)
+    t.run_daily_cycle(mid_session(FIRST_OF_MONTH), make_session(FIRST_OF_MONTH))
+    spent = sum(p.qty * 100.0 for p in broker.positions.values())
+    assert spent <= 10_000 - 9_500
+
+
+def test_sell_skipped_when_stop_cancel_does_not_complete(cfg, tmp_path):
+    broker = FakeBroker(positions={"JNJ": BrokerPosition("JNJ", 10, 100.0)})
+    broker._add("jnj-stop", "JNJ", "sell", "stop", 10, "new", stop=80.0)
+    broker.slow_cancels = True
+    t = make_trader(cfg, tmp_path, broker)
+    t.state.positions["JNJ"] = _meta(80.0)
+    t.run_daily_cycle(mid_session(FIRST_OF_MONTH), make_session(FIRST_OF_MONTH))
+    assert "JNJ" in broker.positions
+    assert not any(c.endswith("JNJ-sell-exit") for c in broker.submissions)

@@ -54,6 +54,8 @@ class FakeBroker:
         self.ids = itertools.count(1)
         self.fail_next_submits = 0       # raise transient error but still accept the order
         self.fail_next_submits_lost = 0  # raise transient error and drop the order
+        self.reject_symbols: set[str] = set()  # non-transient rejection for these symbols
+        self.slow_cancels = False              # cancels stay "pending_cancel"
 
     # reads
     def get_account(self):
@@ -63,7 +65,7 @@ class FakeBroker:
         return dict(self.positions)
 
     def get_open_orders(self):
-        return [o for o in self.orders.values() if o.status in ("new", "accepted", "held")]
+        return [o for o in self.orders.values() if o.status in ("new", "accepted", "held", "pending_cancel")]
 
     def get_order_by_client_id(self, cid):
         return self.orders.get(cid)
@@ -85,6 +87,10 @@ class FakeBroker:
     def _add(self, cid, symbol, side, type_, qty, status, stop=None, price=None):
         from bot.broker import TransientBrokerError
 
+        from bot.broker import BrokerError
+
+        if symbol in self.reject_symbols:
+            raise BrokerError(f"rejected {symbol}")
         self.submissions.append(cid)
         o = BrokerOrder(str(next(self.ids)), cid, symbol, side, type_, qty, status, stop,
                         qty if status == "filled" else 0, price if status == "filled" else None)
@@ -118,8 +124,9 @@ class FakeBroker:
     def cancel_order(self, order_id):
         for cid, o in self.orders.items():
             if o.id == order_id:
+                status = "pending_cancel" if self.slow_cancels else "canceled"
                 self.orders[cid] = BrokerOrder(o.id, o.client_order_id, o.symbol, o.side, o.type, o.qty,
-                                               "canceled", o.stop_price)
+                                               status, o.stop_price)
                 self.cancelled.append(cid)
 
 

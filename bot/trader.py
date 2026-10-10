@@ -28,7 +28,7 @@ import pandas as pd
 from bot import indicators as ind
 from bot import market_filter
 from bot.backtest.engine import history_bars_needed
-from bot.broker import Broker, BrokerOrder, BrokerPosition
+from bot.broker import Broker, BrokerError, BrokerOrder
 from bot.config import Config
 from bot.logging_setup import alert, log_decision
 from bot.models import AccountView, Position, Side, Signal
@@ -112,6 +112,8 @@ class Trader:
                 meta = PositionMeta(entry_date=today.isoformat(), strategy="unknown", stop_price=None,
                                     lot_id=f"adopted-{sym}-{today:%Y%m%d}", entry_price=bp.avg_entry_price)
                 self.state.positions[sym] = meta
+            if meta.entry_price is None:
+                meta.entry_price = bp.avg_entry_price
             positions[sym] = Position(sym, bp.qty, bp.avg_entry_price, date.fromisoformat(meta.entry_date),
                                       meta.stop_price)
 
@@ -122,7 +124,11 @@ class Trader:
             sells = self.broker.get_filled_sells(sym, date.fromisoformat(meta.entry_date))
             log_decision("position_closed_outside_cycle", symbol=sym, sells=[vars(s) for s in sells])
             for s in sells:
-                self._log_fill(today, sym, "sell", s.filled_qty, s.filled_avg_price or 0.0,
+                if not s.filled_avg_price:
+                    alert(f"sell of {sym} ({s.client_order_id}) has no fill price; add it to the trade log by hand",
+                          symbol=sym)
+                    continue
+                self._log_fill(today, sym, "sell", s.filled_qty, s.filled_avg_price,
                                reason="stop or manual close", lot_id=meta.lot_id, fill_id=s.client_order_id,
                                entry_price=meta.entry_price)
         self.save()
@@ -144,8 +150,9 @@ class Trader:
         """Make sure each position has a resting stop for its full quantity."""
         open_orders = self.broker.get_open_orders()
         for sym, pos in positions.items():
-            covered = sum(o.qty for o in open_orders
-                          if o.symbol == sym and o.side == "sell" and o.type == "stop")
+            # Any pending sell holds the shares (a second order for them would be
+            # rejected), and a pending market sell is about to close the position.
+            covered = sum(o.qty for o in open_orders if o.symbol == sym and o.side == "sell")
             if covered >= pos.qty:
                 continue
             stop = pos.stop_price or self._default_stop(sym, today)
@@ -153,20 +160,37 @@ class Trader:
                 alert(f"{sym} has no stop and none could be computed; protect it by hand", symbol=sym)
                 continue
             qty = pos.qty - covered
-            cid = make_client_order_id("protect", today, sym, "sell", f"stop{qty}")
+            cid = self._fresh_protect_id(today, sym)
             log_decision("place_protective_stop", symbol=sym, qty=qty, stop_price=round(stop, 2),
                          client_order_id=cid, dry_run=self.dry_run)
-            if self.dry_run:
+            if self.dry_run or cid is None:
+                if cid is None:
+                    alert(f"too many protective stops for {sym} today; protect it by hand", symbol=sym)
+                continue
+            try:
+                _, submitted = submit_idempotent(
+                    self.broker, cid, lambda: self.broker.submit_stop_sell(sym, qty, stop, cid), sleep=self.sleep)
+            except BrokerError as e:
+                # Keep going: one rejected stop must not leave the other positions unprotected.
+                alert(f"could not place stop for {sym}: {e}", symbol=sym)
                 continue
             # Protective stops are counted but never blocked by the order limit:
             # an unprotected position is worse than one extra order.
-            self.risk.record_order()
-            submit_idempotent(self.broker, cid, lambda: self.broker.submit_stop_sell(sym, qty, stop, cid),
-                              sleep=self.sleep)
+            if submitted:
+                self.risk.record_order()
             meta = self.state.positions.get(sym)
             if meta:
                 meta.stop_price = stop
         self.save()
+
+    def _fresh_protect_id(self, today: date, sym: str, max_tries: int = 20) -> str | None:
+        """A client_order_id not used yet today. Reusing the ID of a stop that
+        was cancelled would make submit_idempotent return the dead order."""
+        for n in range(1, max_tries + 1):
+            cid = make_client_order_id("protect", today, sym, "sell", f"p{n}")
+            if self.dry_run or self.broker.get_order_by_client_id(cid) is None:
+                return cid
+        return None
 
     # ---- daily cycle ---------------------------------------------------------------
 
@@ -186,6 +210,17 @@ class Trader:
             if time.monotonic() >= deadline:
                 return o
             self.sleep(2)
+
+    def _wait_for_cancels(self, client_order_ids: list[str]) -> bool:
+        deadline = time.monotonic() + float(self.cfg.run_loop["fill_wait_seconds"])
+        while True:
+            statuses = [getattr(self.broker.get_order_by_client_id(c), "status", "canceled")
+                        for c in client_order_ids]
+            if all(s in ("canceled", "expired", "rejected") for s in statuses):
+                return True
+            if any(s == "filled" for s in statuses) or time.monotonic() >= deadline:
+                return False
+            self.sleep(1)
 
     def _log_fill(self, day: date, sym: str, side: str, qty: int, price: float, reason: str, lot_id: str,
                   fill_id: str, entry_price: float | None = None) -> None:
@@ -269,17 +304,34 @@ class Trader:
                      client_order_id=cid, dry_run=self.dry_run)
         if not d.approved or self.dry_run:
             return
-        for o in self.broker.get_open_orders():
-            if o.symbol == sig.symbol and o.side == "sell":
-                self.broker.cancel_order(o.id)
-        self.risk.record_order()
+        existing = self.broker.get_order_by_client_id(cid)
+        if existing is None:
+            # The stop holds the shares; it must be fully cancelled before the
+            # sell, or the broker rejects the sell for insufficient quantity.
+            stops = [o for o in self.broker.get_open_orders() if o.symbol == sig.symbol and o.side == "sell"]
+            try:
+                for o in stops:
+                    self.broker.cancel_order(o.id)
+            except BrokerError as e:
+                alert(f"could not cancel stop for {sig.symbol}; not selling: {e}", symbol=sig.symbol)
+                return
+            if not self._wait_for_cancels([o.client_order_id for o in stops]):
+                alert(f"stop for {sig.symbol} did not cancel in time; sell skipped, monitor will re-protect",
+                      symbol=sig.symbol)
+                return
+        try:
+            _, submitted = submit_idempotent(
+                self.broker, cid, lambda: self.broker.submit_market_sell(sig.symbol, d.qty, cid), sleep=self.sleep)
+        except BrokerError as e:
+            alert(f"sell of {sig.symbol} rejected: {e}; monitor will re-place its stop", symbol=sig.symbol)
+            return
+        if submitted:
+            self.risk.record_order()
         self.save()
-        submit_idempotent(self.broker, cid, lambda: self.broker.submit_market_sell(sig.symbol, d.qty, cid),
-                          sleep=self.sleep)
         filled = self._wait_for_fill(cid)
         meta = self.state.positions.get(sig.symbol)
-        if filled and filled.status == "filled":
-            self._log_fill(today, sig.symbol, "sell", filled.filled_qty, filled.filled_avg_price or 0.0,
+        if filled and filled.status == "filled" and filled.filled_avg_price:
+            self._log_fill(today, sig.symbol, "sell", filled.filled_qty, filled.filled_avg_price,
                            sig.reason, meta.lot_id if meta else "", cid, meta.entry_price if meta else None)
             self.state.positions.pop(sig.symbol, None)
         else:
@@ -293,7 +345,15 @@ class Trader:
         if price is None or not math.isfinite(price):
             price = float(bars[sig.symbol]["close"].iloc[-1])
         stop = round(price - sig.stop_distance, 2)
-        view = AccountView(acct.equity, acct.cash, positions)
+        # Alpaca lowers cash only when an order fills, so reserve cash for
+        # buys that are still open; otherwise a margin account would overspend.
+        reserved = 0.0
+        for o in self.broker.get_open_orders():
+            if o.side == "buy":
+                ref = self.data.get_latest_price(o.symbol) or (
+                    float(bars[o.symbol]["close"].iloc[-1]) if o.symbol in bars else price)
+                reserved += (o.qty - o.filled_qty) * ref
+        view = AccountView(acct.equity, acct.cash - reserved, positions)
         d = self.risk.check_entry(sig.symbol, price, stop, sig.target_weight, view, now, session)
         cid = make_client_order_id(self.strategy.name, today, sig.symbol, "buy", "entry")
         log_decision("buy_decision", symbol=sig.symbol, reason=sig.reason, inputs=sig.inputs, price=price,
@@ -301,13 +361,20 @@ class Trader:
                      checks=d.checks, client_order_id=cid, dry_run=self.dry_run)
         if not d.approved or self.dry_run:
             return acct
-        self.risk.record_order()
         self.state.positions[sig.symbol] = PositionMeta(entry_date=today.isoformat(), strategy=self.strategy.name,
                                                         stop_price=stop, lot_id=cid)
         self.save()
-        submit_idempotent(self.broker, cid,
-                          lambda: self.broker.submit_market_buy_with_stop(sig.symbol, d.qty, stop, cid),
-                          sleep=self.sleep)
+        try:
+            _, submitted = submit_idempotent(
+                self.broker, cid, lambda: self.broker.submit_market_buy_with_stop(sig.symbol, d.qty, stop, cid),
+                sleep=self.sleep)
+        except BrokerError as e:
+            alert(f"buy of {sig.symbol} rejected: {e}", symbol=sig.symbol)
+            self.state.positions.pop(sig.symbol, None)
+            self.save()
+            return acct
+        if submitted:
+            self.risk.record_order()
         filled = self._wait_for_fill(cid)
         if filled and filled.status == "filled":
             self.state.positions[sig.symbol].entry_price = filled.filled_avg_price

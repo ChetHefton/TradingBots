@@ -42,6 +42,8 @@ class BrokerPosition:
     symbol: str
     qty: int
     avg_entry_price: float
+    current_price: float | None = None
+    unrealized_pl: float | None = None
 
 
 @dataclass(frozen=True)
@@ -151,7 +153,10 @@ class AlpacaPaperBroker:
     def get_positions(self) -> dict[str, BrokerPosition]:
         out = {}
         for p in self._call(self.client.get_all_positions):
-            out[p.symbol] = BrokerPosition(p.symbol, int(float(p.qty)), float(p.avg_entry_price))
+            out[p.symbol] = BrokerPosition(
+                p.symbol, int(float(p.qty)), float(p.avg_entry_price),
+                current_price=float(p.current_price) if p.current_price else None,
+                unrealized_pl=float(p.unrealized_pl) if p.unrealized_pl else None)
         return out
 
     def get_open_orders(self) -> list[BrokerOrder]:
