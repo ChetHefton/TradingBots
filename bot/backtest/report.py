@@ -44,6 +44,18 @@ def save_table(rows: list[dict[str, str]], path_stem: Path) -> str:
     return md
 
 
+def save_equity_csv(periods: dict[str, list[BacktestResult]], path: Path) -> None:
+    """Long-format equity curves (period, strategy, date, index) for the dashboard."""
+    frames = []
+    for label, results in periods.items():
+        for r in results:
+            curve = (r.equity / r.initial_capital * 100).round(3)
+            frames.append(pd.DataFrame({"period": label, "strategy": r.name,
+                                        "date": curve.index.strftime("%Y-%m-%d"), "index": curve.values}))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.concat(frames).to_csv(path, index=False)
+
+
 def equity_chart(periods: dict[str, list[BacktestResult]], path: Path, title_note: str = "") -> None:
     """One panel per period; each curve indexed to 100 at the start."""
     fig, axes = plt.subplots(1, len(periods), figsize=(7.2 * len(periods), 5.0), squeeze=False)

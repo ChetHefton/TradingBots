@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradingBots Terminal</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=VT323&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="crt">
+<canvas id="rain" aria-hidden="true"></canvas>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">TRADINGBOTS//OS <small>RISK-FIRST AUTOMATON · PHASE 1</small></div>
+    <div class="top-right">
+      <span class="badge paper" title="This bot cannot reach the live trading endpoint">PAPER MODE</span>
+      <span id="kill-badge" class="badge" hidden></span>
+      <button class="fx" id="fx-toggle" aria-pressed="true" title="Toggle scanlines, glow and rain">FX: ON</button>
+    </div>
+  </header>
+  <div class="boot" id="boot" aria-live="polite"></div>
+
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button class="tab" role="tab" data-tab="stat" aria-selected="true">STAT</button>
+    <button class="tab" role="tab" data-tab="inv" aria-selected="false">INV</button>
+    <button class="tab" role="tab" data-tab="data" aria-selected="false">DATA</button>
+    <button class="tab" role="tab" data-tab="trades" aria-selected="false">TRADES</button>
+    <button class="tab" role="tab" data-tab="log" aria-selected="false">LOG</button>
+  </nav>
+
+  <main>
+    <section id="tab-stat" role="tabpanel"></section>
+    <section id="tab-inv" role="tabpanel" hidden></section>
+    <section id="tab-data" role="tabpanel" hidden></section>
+    <section id="tab-trades" role="tabpanel" hidden></section>
+    <section id="tab-log" role="tabpanel" hidden></section>
+  </main>
+
+  <footer>READ-ONLY TERMINAL · NO ORDER CONTROLS · REFRESH 15s · <span id="clock"></span></footer>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

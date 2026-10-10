@@ -7,12 +7,13 @@ plus the rebalance-day sensitivity check, and write reports/.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from datetime import date, datetime, timedelta, timezone
 
 from bot.backtest.engine import buy_and_hold, run_backtest
 from bot.backtest.metrics import compute
-from bot.backtest.report import comparison_rows, equity_chart, save_table
+from bot.backtest.report import comparison_rows, equity_chart, save_equity_csv, save_table
 from bot.config import load_config, load_paper_keys
 from bot.data import AlpacaData, synthetic_bars
 from bot.strategies import STRATEGIES, build_strategy
@@ -104,6 +105,14 @@ def main(argv: list[str] | None = None) -> int:
     equity_chart({f"Build {build_start} to {build_end}": all_results["build"],
                   f"Test {test_start} to {test_end}": all_results["test"]},
                  out / "equity_curves.png", title_note=note)
+    save_equity_csv({"build": all_results["build"], "test": all_results["test"]}, out / "equity_curves.csv")
+    (out / "meta.json").write_text(json.dumps({
+        "data_note": note, "synthetic": args.synthetic, "overrides": args.set,
+        "build": [str(build_start), str(build_end)], "test": [str(test_start), str(test_end)],
+        "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "events": {label: [{"strategy": r.name, "date": str(d), "kind": k, "message": m}
+                           for r in res for d, k, m in r.events] for label, res in all_results.items()},
+    }, indent=2))
     (out / "report.md").write_text("\n".join(report) + "\n")
     print("\n".join(report))
     print(f"\nWrote {out}/report.md, comparison_*.csv, sensitivity_momentum.csv, equity_curves.png, trades_*.csv")

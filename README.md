@@ -93,6 +93,30 @@ Logs:
 
 A dry run uses separate state and trade-log files, so it never affects the real ones.
 
+## Dashboard
+
+```bash
+python -m scripts.dashboard              # http://127.0.0.1:8050
+python -m scripts.dashboard --no-broker  # files only, no Alpaca calls
+```
+
+A green-phosphor terminal with scanlines, glow and Matrix rain. **FX: OFF** in the header turns the effects off, and they are skipped automatically when your OS asks for reduced motion. Tabs:
+
+| Tab | Shows |
+|---|---|
+| STAT | Equity, today's loss against the daily halt, drawdown against the kill switch, orders used today, risk limits. Shows a banner when a halt or the kill switch is active. |
+| INV | Positions with entry, current price, unrealized P/L, stop and the strategy that opened them. |
+| DATA | Backtest equity curves (hover for values), scorecard vs. buy-and-hold SPY, and the rebalance-day sensitivity table for the build or test period. |
+| TRADES | The paper trade log, with possible wash sales highlighted. |
+| LOG | The decision feed from `logs/decisions.jsonl`, filterable. |
+
+The dashboard is **read-only**:
+
+- It listens on 127.0.0.1 only.
+- It answers GET requests only.
+- It has no order controls; a halted or killed bot can't be restarted from it.
+- It reads the files the bot writes. With paper keys present, it also shows an account snapshot, cached for 30 seconds.
+
 ## Settings (`config/settings.yaml`)
 
 ### Risk (enforced in `bot/risk.py` for every order, in backtests and in paper trading)
