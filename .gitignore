@@ -1,0 +1,16 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# environment
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# runtime output
+data_cache/
+logs/
+state/
+reports/

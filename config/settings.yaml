@@ -1,0 +1,106 @@
+# All tunable settings for the bot live in this one file.
+# Strategy parameters are the published defaults. Do not tune them to improve
+# backtest results; see README "Why not tune parameters".
+
+mode:
+  # Live trading is not implemented in phase 1. Setting this to true makes the
+  # bot refuse to start (see bot/config.py and bot/broker.py).
+  live_trading: false
+
+# Every order is checked against these limits by bot/risk.py.
+risk:
+  max_risk_per_trade_pct: 0.01   # equity lost if the stop is hit, per position
+  max_position_pct: 0.10         # max position value as a fraction of equity
+  daily_loss_limit_pct: 0.02     # vs. previous close equity; halts until next trading day
+  max_drawdown_pct: 0.10         # vs. peak equity; trips the kill switch (manual reset)
+  max_orders_per_day: 20
+  skip_open_minutes: 15          # no orders in the first N minutes of the session
+  skip_close_minutes: 15         # no orders in the last N minutes of the session
+
+# The only symbols the bot may trade. Liquid large caps and major ETFs only.
+symbols:
+  - SPY
+  - QQQ
+  - AAPL
+  - MSFT
+  - AMZN
+  - GOOGL
+  - META
+  - NVDA
+  - JPM
+  - JNJ
+  - V
+  - PG
+  - UNH
+  - HD
+  - XOM
+  - COST
+  - XLK
+  - XLF
+  - XLE
+  - XLV
+  - XLY
+  - XLP
+
+# Applies to every strategy: new entries only when SPY's close is above its SMA.
+market_filter:
+  symbol: SPY
+  sma_days: 200
+
+strategies:
+  default: momentum       # strategy used by run_paper.py
+
+  momentum:
+    lookback_days: 252    # ~12 months
+    skip_days: 21         # skip the most recent ~1 month (12-1 momentum)
+    top_n: 5
+    trend_sma_days: 200
+    atr_days: 14
+    atr_stop_mult: 2.0
+    vol_days: 20
+    rebalance_offset: 0   # 0 = trade on the 1st trading day of the month
+
+  faber:
+    symbol: SPY
+    sma_months: 10
+    # The Faber rule has no stop of its own; the risk engine requires one on
+    # every entry, so the same 2x ATR stop as the other strategies is used.
+    atr_days: 14
+    atr_stop_mult: 2.0
+
+  rsi2:
+    rsi_days: 2
+    entry_below: 10
+    trend_sma_days: 200
+    exit_sma_days: 5
+    max_hold_days: 5
+    atr_days: 14
+    atr_stop_mult: 2.0
+
+data:
+  # Alpaca historical daily bars. "sip" history is free when the request ends
+  # more than 15 minutes ago; "iex" is free in real time but is one exchange.
+  history_feed: sip
+  latest_feed: iex
+  cache_dir: data_cache
+
+backtest:
+  data_start: "2016-01-01"   # Alpaca daily history starts around here
+  build_start: "2017-03-01"  # first ~14 months are warm-up for 12-1 momentum and SMAs
+  build_end: "2021-12-31"
+  test_start: "2022-01-01"   # held out: do not change strategies after looking at it
+  test_end: null             # null = latest available
+  initial_capital: 100000
+  slippage_pct: 0.0005       # per side
+  spread_pct: 0.0004         # full bid-ask spread; half is charged per side
+  sensitivity_offsets: [0, 1, 2, 3, 4, 5]
+  report_dir: reports
+
+paths:
+  log_dir: logs
+  state_file: state/bot_state.json
+  trade_log: logs/trade_log.csv
+
+run_loop:
+  poll_seconds: 300          # how often to re-check equity and stops during the session
+  fill_wait_seconds: 60      # how long to wait for a sell to fill before buying
