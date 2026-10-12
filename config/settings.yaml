@@ -17,30 +17,24 @@ risk:
   skip_open_minutes: 15          # no orders in the first N minutes of the session
   skip_close_minutes: 15         # no orders in the last N minutes of the session
 
-# The only symbols the bot may trade. Liquid large caps and major ETFs only.
+# The only symbols the bot may trade. The strategy picks from this menu itself.
+# One SPDR ETF per sector: diversified, very liquid, and chosen without
+# hindsight (no "stocks we already know went up"), and ETFs don't go bankrupt
+# or drop out of an index, which avoids survivorship bias in the backtest.
+# XLC (communications) is left out: it only launched in mid-2018.
 symbols:
-  - SPY
-  - QQQ
-  - AAPL
-  - MSFT
-  - AMZN
-  - GOOGL
-  - META
-  - NVDA
-  - JPM
-  - JNJ
-  - V
-  - PG
-  - UNH
-  - HD
-  - XOM
-  - COST
-  - XLK
-  - XLF
-  - XLE
-  - XLV
-  - XLY
-  - XLP
+  - SPY    # S&P 500 (also drives the market filter; must stay)
+  - QQQ    # Nasdaq-100
+  - XLK    # technology
+  - XLF    # financials
+  - XLV    # health care
+  - XLE    # energy
+  - XLI    # industrials
+  - XLY    # consumer discretionary
+  - XLP    # consumer staples
+  - XLU    # utilities
+  - XLB    # materials
+  - XLRE   # real estate (launched Oct 2015)
 
 # Applies to every strategy: new entries only when SPY's close is above its SMA.
 market_filter:

@@ -12,11 +12,14 @@ from bot.config import load_config
 from bot.risk import Session
 
 NY = ZoneInfo("America/New_York")
+TEST_SYMBOLS = ["SPY", "QQQ", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "NVDA", "JPM", "JNJ", "V", "PG",
+                "UNH", "HD", "XOM", "COST", "XLK", "XLF", "XLE", "XLV", "XLY", "XLP"]
 
 
 @pytest.fixture
 def cfg():
-    return load_config()
+    # A fixed allowlist, independent of whatever you put in settings.yaml.
+    return load_config(overrides=[f"symbols={TEST_SYMBOLS}"])
 
 
 def make_session(day: date = date(2026, 10, 5)) -> Session:

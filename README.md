@@ -162,7 +162,7 @@ Published strategy returns drop by about half after publication, partly because 
 
 ## Known limitations (phase 1)
 
-- **Survivorship bias.** The allowlist is today's large caps. Stocks that fell out of the large-cap set (or went bust) are missing, which flatters momentum in the backtest.
+- **Survivorship bias.** The default allowlist is SPY, QQQ and one sector ETF per sector, which mostly avoids it: ETFs don't go bust or drop out of an index. If you add individual stocks, pick them the way you would have *at the start* of the test period. A list of today's winners makes any backtest look great.
 - **The 10% position cap dominates sizing.** Momentum can be at most ~50% invested (5 × 10%), and Faber holds at most 10% in SPY. Both will lag buy-and-hold SPY in a rising market by construction. Compare risk-adjusted numbers (Sharpe, drawdown), not just total return.
 - **Backtests fill at the open; paper trading fills after 9:45.** The prices will differ somewhat.
 - **Daily bars can't see intraday paths.** The daily-loss halt is checked at the open and the close in backtests, and every 5 minutes when paper trading.
