@@ -30,6 +30,7 @@ def scan(cfg: Config, bars: dict[str, pd.DataFrame], today: date | None = None) 
     mom = cfg.strategy_params("momentum")
     rsi_p = cfg.strategy_params("rsi2")
     mf = cfg.market_filter
+    strategy = cfg.default_strategy
     fr = market_filter.evaluate(bars, mf["symbol"], mf["sma_days"])
 
     rows: list[dict[str, Any]] = []
@@ -73,20 +74,35 @@ def scan(cfg: Config, bars: dict[str, pd.DataFrame], today: date | None = None) 
     top_n = mom["top_n"]
     for r in rows:
         if not r["available"]:
+            r["momentum_status"] = r["rsi2_status"] = "NO DATA"
             r["status"] = "NO DATA"
-        elif r.get("rank") is None:
-            r["status"] = "NEEDS 1Y HISTORY"
+            continue
+        if r.get("rank") is None:
+            r["momentum_status"] = "NEEDS 1Y HISTORY"
         elif not r["above_trend"]:
-            r["status"] = "BELOW TREND"
+            r["momentum_status"] = "BELOW TREND"
         elif r["rank"] <= top_n:
-            r["status"] = "BUY CANDIDATE" if fr.risk_on else "CANDIDATE · FILTER OFF"
+            r["momentum_status"] = "BUY CANDIDATE" if fr.risk_on else "CANDIDATE · FILTER OFF"
         else:
-            r["status"] = f"RANK {r['rank']}"
-        if r["available"] and r.get("rsi2") is not None and r["rsi2"] < rsi_p["entry_below"] and r["above_trend"]:
-            r["rsi2_signal"] = True
+            r["momentum_status"] = f"RANK {r['rank']}"
+
+        r["rsi2_signal"] = bool(r["above_trend"] and r.get("rsi2") is not None
+                                and r["rsi2"] < rsi_p["entry_below"])
+        if r["sma200"] is None:
+            r["rsi2_status"] = "NEEDS HISTORY"
+        elif not r["above_trend"]:
+            r["rsi2_status"] = "BELOW TREND"
+        elif r["rsi2_signal"]:
+            r["rsi2_status"] = "BUY SIGNAL" if fr.risk_on else "SIGNAL · FILTER OFF"
+        else:
+            r["rsi2_status"] = f"WAIT · RSI {r['rsi2']:.0f}" if r.get("rsi2") is not None else "WAIT"
+        r["status"] = r["rsi2_status"] if strategy == "rsi2" else r["momentum_status"]
 
     today = today or date.today()
     return {
+        "strategy": strategy,
+        "rsi2_entry_below": rsi_p["entry_below"],
+        "rsi2_max_hold_days": rsi_p["max_hold_days"],
         "market": {"symbol": mf["symbol"], "sma_days": mf["sma_days"], "risk_on": fr.risk_on,
                    "close": _r(fr.close, 2), "sma": _r(fr.sma, 2)},
         "top_n": top_n,

@@ -67,7 +67,7 @@ Output in `reports/`:
 python -m scripts.run_paper --dry-run   # log what it would do, place nothing
 python -m scripts.run_paper             # run continuously; trades once per day after 9:45 ET
 python -m scripts.run_paper --once      # one cycle and exit (for cron, e.g. 10:00 ET on weekdays)
-python -m scripts.run_paper --strategy rsi2
+python -m scripts.run_paper --strategy momentum
 python -m scripts.run_paper --reset-kill-switch   # only after reviewing why it tripped
 ```
 
@@ -143,9 +143,9 @@ Also enforced:
 
 | Strategy | Rule |
 |---|---|
-| `momentum` (default) | On the 1st trading day of each month, rank the allowlist by 12-month return excluding the latest month (252 and 21 trading days). Take the top 5. Hold those whose close is above their own 200-day SMA, weighted by inverse 20-day volatility (risk limits still apply). At rebalance, sell holdings that left that set. Hard stop at 2× the 14-day ATR. |
+| `momentum` | On the 1st trading day of each month, rank the allowlist by 12-month return excluding the latest month (252 and 21 trading days). Take the top 5. Hold those whose close is above their own 200-day SMA, weighted by inverse 20-day volatility (risk limits still apply). At rebalance, sell holdings that left that set. Hard stop at 2× the 14-day ATR. |
 | `faber` | At month end, hold SPY if its close is above the average of the last 10 month-end closes, otherwise hold cash. |
-| `rsi2` | Buy when the 2-day RSI closes below 10 and the close is above the 200-day SMA. Sell after a close above the 5-day SMA, or after 5 sessions. Hard stop at 2× ATR. |
+| `rsi2` (default) | Buy when the 2-day RSI closes below 10 and the close is above the 200-day SMA. Sell after a close above the 5-day SMA, or after 5 sessions. Hard stop at 2× ATR. |
 
 The **market filter** (SPY close above its 200-day SMA) blocks new buys in every strategy. It never blocks sells.
 

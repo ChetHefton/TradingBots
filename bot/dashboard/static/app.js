@@ -188,19 +188,25 @@ function renderScan(sc, force = false) {
   const stamp = sc.rows.map((r) => r.as_of).join();
   if (!force && scanData && scanData._stamp === stamp) return;  // unchanged; keep hover state
   scanData = { ...sc, _stamp: stamp };
-  const rows = sc.rows.slice().sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99));
+  const isRsi = sc.strategy === "rsi2";
+  // RSI-2: signals first, then most oversold. Momentum: by rank.
+  const rows = sc.rows.slice().sort(isRsi
+    ? (a, b) => (b.rsi2_signal - a.rsi2_signal) || ((a.rsi2 ?? 999) - (b.rsi2 ?? 999))
+    : (a, b) => (a.rank ?? 99) - (b.rank ?? 99));
   if (!rows.some((r) => r.symbol === scanSel)) scanSel = rows.find((r) => r.available)?.symbol || "";
   const m = sc.market;
   el.innerHTML = `
     <div class="notice" style="${m.risk_on ? "border-color:var(--fg);color:var(--fg);text-shadow:var(--glow)" : ""}">
       MARKET FILTER: ${m.risk_on ? "RISK ON" : "RISK OFF"} — ${esc(m.symbol)} ${esc(m.close)} ${m.risk_on ? "&gt;" : "≤"} ${esc(m.sma_days)}-DAY AVG ${esc(m.sma)}.
       ${m.risk_on ? "NEW BUYS ALLOWED." : "NO NEW BUYS UNTIL IT RECOVERS."}
-      NEXT MOMENTUM REBALANCE ≈ ${esc(sc.next_rebalance)}.</div>
+      ${isRsi ? `STRATEGY RSI-2: CHECKS EVERY TRADING DAY AFTER 9:45 ET.` : `NEXT MOMENTUM REBALANCE ≈ ${esc(sc.next_rebalance)}.`}</div>
     <div class="panel full"><h2>WATCHLIST · CLICK A ROW</h2>
       <div class="table-wrap"><table class="scan-table"><thead><tr>
         <th>#</th><th class="left">SYMBOL</th><th>CLOSE</th><th>1D</th><th>VS 200D</th><th>12-1 MOM</th><th>RSI-2</th><th>STOP IF BOUGHT</th><th class="left">STATUS</th>
       </tr></thead><tbody>${rows.map((r) => scanRow(r, sc.top_n)).join("")}</tbody></table></div>
-      <div class="sub" style="margin-top:6px">12-1 MOM = RETURN OVER THE LAST 12 MONTHS, SKIPPING THE MOST RECENT MONTH. THE BOT BUYS THE TOP ${sc.top_n} THAT ARE ABOVE THEIR 200-DAY AVERAGE.</div>
+      <div class="sub" style="margin-top:6px">${isRsi
+        ? `RSI-2 = HOW OVERSOLD THE LAST 2 DAYS WERE (0 = VERY, 100 = NOT AT ALL). THE BOT BUYS WHEN RSI-2 &lt; ${sc.rsi2_entry_below} AND THE PRICE IS ABOVE ITS 200-DAY AVERAGE, THEN SELLS ON THE FIRST CLOSE ABOVE THE 5-DAY AVERAGE OR AFTER ${sc.rsi2_max_hold_days} DAYS.`
+        : `12-1 MOM = RETURN OVER THE LAST 12 MONTHS, SKIPPING THE MOST RECENT MONTH. THE BOT BUYS THE TOP ${sc.top_n} THAT ARE ABOVE THEIR 200-DAY AVERAGE.`}</div>
     </div>
     <div class="panel full" style="margin-top:14px" id="scan-detail"></div>`;
   el.querySelectorAll("tr[data-sym]").forEach((tr) => {
@@ -244,12 +250,23 @@ function drawScanDetail() {
     label: `${r.symbol} price and 200-day average` });
 }
 
+function rsiVerdict(r, lines) {
+  const lim = scanData.rsi2_entry_below;
+  if (r.rsi2 != null) lines.push(`RSI-2: ${r.rsi2}. ${r.rsi2 < lim ? "OVERSOLD: A SHORT-TERM DIP." : `NOT OVERSOLD (NEEDS TO DROP BELOW ${lim}).`}`);
+  if (r.status === "BUY SIGNAL") lines.push(`▶ DIP IN AN UPTREND: THE BOT WOULD BUY IT AT THE NEXT CHECK, THEN SELL ON THE FIRST BOUNCE OR AFTER ${scanData.rsi2_max_hold_days} DAYS.`);
+  else if (r.status.startsWith("SIGNAL")) lines.push("▶ WOULD QUALIFY, BUT THE MARKET FILTER IS OFF, SO NO NEW BUYS.");
+  else if (r.above_trend) lines.push("WAITING FOR A DIP. MOST DAYS MOST SYMBOLS SHOW 'WAIT'; THAT'S NORMAL.");
+  if (r.stop_if_bought) lines.push(`IF BOUGHT AT ${money(r.close)}, THE HARD STOP WOULD SIT AT ${money(r.stop_if_bought)} (2× ATR ${money(r.atr14)} BELOW).`);
+  return lines.map((l) => `<div>&gt; ${esc(l)}</div>`).join("");
+}
+
 function verdict(r) {
   const n = scanData.top_n, lines = [];
   if (r.sma200 == null) lines.push(`NOT ENOUGH HISTORY FOR A 200-DAY AVERAGE YET (${r.history_days} DAYS).`);
   else lines.push(r.above_trend
     ? `TREND: UP. CLOSE IS ${pct(r.pct_vs_sma200)} ABOVE ITS 200-DAY AVERAGE.`
     : `TREND: DOWN. CLOSE IS ${pct(-r.pct_vs_sma200)} BELOW ITS 200-DAY AVERAGE. THE BOT WON'T BUY IT.`);
+  if (scanData.strategy === "rsi2") return rsiVerdict(r, lines);
   if (r.rank != null) lines.push(`MOMENTUM: RANK ${r.rank} OF ${scanData.rows.filter((x) => x.rank).length} (${signed(r.momentum_12_1, (x) => pct(x))} OVER 12 MONTHS, SKIPPING THE LAST ONE).`);
   if (r.status === "BUY CANDIDATE") lines.push(`▶ IN THE TOP ${n} AND ABOVE TREND: THE BOT WOULD BUY IT AT THE NEXT REBALANCE (≈ ${scanData.next_rebalance}) IF THAT IS STILL TRUE THEN.`);
   else if (r.status.startsWith("CANDIDATE")) lines.push("▶ WOULD QUALIFY, BUT THE MARKET FILTER IS OFF, SO NO NEW BUYS.");

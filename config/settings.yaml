@@ -42,7 +42,11 @@ market_filter:
   sma_days: 200
 
 strategies:
-  default: momentum       # strategy used by run_paper.py
+  # Strategy used by run_paper.py:
+  #   rsi2     - checks every trading day; holds each position 5 days at most
+  #   momentum - rebalances once a month (1st trading day)
+  #   faber    - SPY in or out, once a month
+  default: rsi2
 
   momentum:
     lookback_days: 252    # ~12 months

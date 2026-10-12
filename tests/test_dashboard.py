@@ -119,9 +119,11 @@ def test_scan_ranks_and_flags_like_the_strategy(cfg):
     out = scan(cfg, bars, today=date(2026, 10, 12))
     rows = {r["symbol"]: r for r in out["rows"]}
     assert out["market"]["risk_on"] is True
-    assert rows["XOM"]["rank"] == 1 and rows["XOM"]["status"] == "BELOW TREND"   # best momentum, broken trend
-    assert rows["AAPL"]["status"] == "BUY CANDIDATE"
-    assert rows["JNJ"]["status"] == "BELOW TREND"
+    assert rows["XOM"]["rank"] == 1 and rows["XOM"]["momentum_status"] == "BELOW TREND"  # best momentum, broken trend
+    assert rows["AAPL"]["momentum_status"] == "BUY CANDIDATE"
+    assert rows["JNJ"]["momentum_status"] == "BELOW TREND" and rows["JNJ"]["rsi2_status"] == "BELOW TREND"
+    assert rows["AAPL"]["rsi2_status"].startswith("WAIT")  # steady uptrend: not oversold
+    assert rows["AAPL"]["status"] == rows["AAPL"][f"{cfg.default_strategy}_status"]
     assert rows["QQQ"]["status"] == "NO DATA"
     assert rows["AAPL"]["stop_if_bought"] < rows["AAPL"]["close"]
     assert len(rows["AAPL"]["series"]["close"]) == 260
@@ -133,3 +135,15 @@ def test_scan_endpoint_without_price_data(served):
     base, _, _ = served
     data = json.loads(get(base + "/api/scan")[1])
     assert data["available"] is False and "price data" in data["reason"]
+
+
+def test_scan_flags_rsi2_dip_in_uptrend(cfg):
+    from bot.dashboard.scan import scan
+    from tests.conftest import bars_from_closes
+    from tests.test_strategies import pullback_closes, trend_bars
+
+    dip = bars_from_closes(pullback_closes())
+    spy = trend_bars(0.0008, n=len(dip))
+    spy.index = dip.index
+    row = next(r for r in scan(cfg, {"SPY": spy, "AAPL": dip})["rows"] if r["symbol"] == "AAPL")
+    assert row["rsi2_signal"] and row["rsi2_status"] == "BUY SIGNAL"

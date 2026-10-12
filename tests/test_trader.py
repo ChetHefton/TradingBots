@@ -1,6 +1,8 @@
 """Paper loop behaviour against a fake broker."""
 from datetime import date
 
+import pandas as pd
+
 import pytest
 
 from bot.broker import BrokerPosition
@@ -191,3 +193,18 @@ def test_sell_skipped_when_stop_cancel_does_not_complete(cfg, tmp_path):
     t.run_daily_cycle(mid_session(FIRST_OF_MONTH), make_session(FIRST_OF_MONTH))
     assert "JNJ" in broker.positions
     assert not any(c.endswith("JNJ-sell-exit") for c in broker.submissions)
+
+
+def test_rsi2_cycle_buys_a_dip_with_stop(cfg, tmp_path):
+    from tests.conftest import bars_from_closes
+    from tests.test_strategies import pullback_closes
+
+    dip = bars_from_closes(pullback_closes())
+    dip.index = pd.bdate_range(end="2026-10-13", periods=len(dip))
+    spy = trend_bars(0.0008, n=len(dip), end="2026-10-13")
+    broker = FakeBroker()
+    t = make_trader(cfg, tmp_path, broker, data=FakeData({"SPY": spy, "AAPL": dip}, {"AAPL": 100.0}),
+                    strategy="rsi2")
+    t.run_daily_cycle(mid_session(MID_MONTH), make_session(MID_MONTH))
+    assert set(broker.positions) == {"AAPL"}
+    assert any(o.symbol == "AAPL" and o.type == "stop" for o in broker.get_open_orders())
