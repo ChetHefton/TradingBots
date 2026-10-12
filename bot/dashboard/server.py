@@ -28,6 +28,7 @@ STATIC_FILES = {
     "/style.css": ("style.css", "text/css; charset=utf-8"),
 }
 ACCOUNT_CACHE_SECONDS = 30
+SCAN_CACHE_SECONDS = 600
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
@@ -53,11 +54,34 @@ def _tail_jsonl(path: Path, limit: int) -> list[dict[str, Any]]:
 
 
 class DashboardData:
-    def __init__(self, cfg: Config, account_fn: Callable[[], dict[str, Any]] | None = None):
+    def __init__(self, cfg: Config, account_fn: Callable[[], dict[str, Any]] | None = None,
+                 bars_fn: Callable[[], dict[str, Any]] | None = None):
         self.cfg = cfg
         self.account_fn = account_fn
+        self.bars_fn = bars_fn
         self._account_cache: tuple[float, dict[str, Any]] | None = None
+        self._scan_cache: tuple[float, dict[str, Any]] | None = None
         self._lock = threading.Lock()
+        self._scan_lock = threading.Lock()
+
+    def scan(self) -> dict[str, Any]:
+        """Per-symbol trend/momentum view, cached for 10 minutes."""
+        if self.bars_fn is None:
+            return {"available": False, "reason": "no price data: add paper keys or run the backtest once"}
+        with self._scan_lock:
+            now = time.monotonic()
+            if self._scan_cache and now - self._scan_cache[0] < SCAN_CACHE_SECONDS:
+                return self._scan_cache[1]
+            try:
+                from bot.dashboard.scan import scan
+
+                bars = self.bars_fn()
+                result = {"available": True, **scan(self.cfg, bars)} if bars else \
+                    {"available": False, "reason": "no price data: add paper keys or run the backtest once"}
+            except Exception as e:
+                result = {"available": False, "reason": f"{type(e).__name__}: {e}"}
+            self._scan_cache = (now, result)
+            return result
 
     # Account snapshot from the paper broker, cached so page refreshes don't hammer the API.
     def account(self) -> dict[str, Any]:
@@ -149,6 +173,8 @@ def make_handler(data: DashboardData) -> type[BaseHTTPRequestHandler]:
                     self._json(data.backtest())
                 elif url.path == "/api/decisions":
                     self._json(data.decisions(int(q.get("limit", ["200"])[0])))
+                elif url.path == "/api/scan":
+                    self._json(data.scan())
                 elif url.path == "/api/trades":
                     self._json(data.trades())
                 else:

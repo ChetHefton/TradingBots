@@ -105,6 +105,7 @@ A green-phosphor terminal with scanlines, glow and Matrix rain. **FX: OFF** in t
 | Tab | Shows |
 |---|---|
 | STAT | Equity, today's loss against the daily halt, drawdown against the kill switch, orders used today, risk limits. Shows a banner when a halt or the kill switch is active. |
+| SCAN | Every symbol on your list: close, trend vs. 200-day average, 12-1 momentum rank, RSI-2, where the stop would go, and whether it's a buy candidate. Click a row for its price chart with the 200-day average and a plain-English verdict. |
 | INV | Positions with entry, current price, unrealized P/L, stop and the strategy that opened them. |
 | DATA | Backtest equity curves (hover for values), scorecard vs. buy-and-hold SPY, and the rebalance-day sensitivity table for the build or test period. |
 | TRADES | The paper trade log, with possible wash sales highlighted. |

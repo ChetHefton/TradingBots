@@ -105,3 +105,31 @@ def test_account_failure_does_not_break_dashboard(tmp_path):
         raise ConnectionError("offline")
     snap = DashboardData(cfg, boom).account()
     assert snap["available"] is False and "offline" in snap["reason"]
+
+
+# ---- scan -------------------------------------------------------------------------
+
+def test_scan_ranks_and_flags_like_the_strategy(cfg):
+    from datetime import date
+    from bot.dashboard.scan import next_monthly_trade_day, scan
+    from tests.test_strategies import trend_bars
+
+    bars = {"SPY": trend_bars(0.0008), "AAPL": trend_bars(0.004), "MSFT": trend_bars(0.003),
+            "JNJ": trend_bars(-0.002), "XOM": trend_bars(0.006, crash=(15, 0.6))}
+    out = scan(cfg, bars, today=date(2026, 10, 12))
+    rows = {r["symbol"]: r for r in out["rows"]}
+    assert out["market"]["risk_on"] is True
+    assert rows["XOM"]["rank"] == 1 and rows["XOM"]["status"] == "BELOW TREND"   # best momentum, broken trend
+    assert rows["AAPL"]["status"] == "BUY CANDIDATE"
+    assert rows["JNJ"]["status"] == "BELOW TREND"
+    assert rows["QQQ"]["status"] == "NO DATA"
+    assert rows["AAPL"]["stop_if_bought"] < rows["AAPL"]["close"]
+    assert len(rows["AAPL"]["series"]["close"]) == 260
+    assert out["next_rebalance"] == "2026-11-02"
+    assert next_monthly_trade_day(date(2026, 1, 15), 2).isoformat() == "2026-02-04"
+
+
+def test_scan_endpoint_without_price_data(served):
+    base, _, _ = served
+    data = json.loads(get(base + "/api/scan")[1])
+    assert data["available"] is False and "price data" in data["reason"]

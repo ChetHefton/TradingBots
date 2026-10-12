@@ -170,6 +170,95 @@ function renderStat(s) {
     </div>`;
 }
 
+/* ---- SCAN: what the bot sees per symbol ---------------------------------------------- */
+const SCAN_STYLES = {
+  price: { color: "--s-momentum", dash: "" },
+  "200-day avg": { color: "--s-bench", dash: "5 4" },
+  "stop if bought": { color: "--s-rsi2", dash: "2 4" },
+};
+let scanData = null;
+let scanSel = store.get("scanSel", "");
+
+function renderScan(sc, force = false) {
+  const el = $("#tab-scan");
+  if (!sc.available) {
+    el.innerHTML = `<div class="panel full"><h2>SCAN</h2><div class="empty">${esc(sc.reason)}</div></div>`;
+    return;
+  }
+  const stamp = sc.rows.map((r) => r.as_of).join();
+  if (!force && scanData && scanData._stamp === stamp) return;  // unchanged; keep hover state
+  scanData = { ...sc, _stamp: stamp };
+  const rows = sc.rows.slice().sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99));
+  if (!rows.some((r) => r.symbol === scanSel)) scanSel = rows.find((r) => r.available)?.symbol || "";
+  const m = sc.market;
+  el.innerHTML = `
+    <div class="notice" style="${m.risk_on ? "border-color:var(--fg);color:var(--fg);text-shadow:var(--glow)" : ""}">
+      MARKET FILTER: ${m.risk_on ? "RISK ON" : "RISK OFF"} — ${esc(m.symbol)} ${esc(m.close)} ${m.risk_on ? "&gt;" : "≤"} ${esc(m.sma_days)}-DAY AVG ${esc(m.sma)}.
+      ${m.risk_on ? "NEW BUYS ALLOWED." : "NO NEW BUYS UNTIL IT RECOVERS."}
+      NEXT MOMENTUM REBALANCE ≈ ${esc(sc.next_rebalance)}.</div>
+    <div class="panel full"><h2>WATCHLIST · CLICK A ROW</h2>
+      <div class="table-wrap"><table class="scan-table"><thead><tr>
+        <th>#</th><th class="left">SYMBOL</th><th>CLOSE</th><th>1D</th><th>VS 200D</th><th>12-1 MOM</th><th>RSI-2</th><th>STOP IF BOUGHT</th><th class="left">STATUS</th>
+      </tr></thead><tbody>${rows.map((r) => scanRow(r, sc.top_n)).join("")}</tbody></table></div>
+      <div class="sub" style="margin-top:6px">12-1 MOM = RETURN OVER THE LAST 12 MONTHS, SKIPPING THE MOST RECENT MONTH. THE BOT BUYS THE TOP ${sc.top_n} THAT ARE ABOVE THEIR 200-DAY AVERAGE.</div>
+    </div>
+    <div class="panel full" style="margin-top:14px" id="scan-detail"></div>`;
+  el.querySelectorAll("tr[data-sym]").forEach((tr) => {
+    const pick = () => { scanSel = tr.dataset.sym; store.set("scanSel", scanSel); renderScan(scanData, true); };
+    tr.addEventListener("click", pick);
+    tr.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+  });
+  drawScanDetail();
+}
+
+function scanRow(r, topN) {
+  if (!r.available) return `<tr><td></td><td class="left">${esc(r.symbol)}</td><td colspan="6"></td><td class="left">NO DATA</td></tr>`;
+  const cls = r.status.startsWith("BUY") ? "" : r.status === "BELOW TREND" ? "warn-text" : "";
+  const sel = r.symbol === scanSel;
+  return `<tr data-sym="${esc(r.symbol)}" tabindex="0" role="button" aria-pressed="${sel}" class="pick${sel ? " selected" : ""}">
+    <td>${r.rank ?? "—"}</td><td class="left">${esc(r.symbol)}</td><td>${money(r.close)}</td>
+    <td class="${r.change_1d < 0 ? "warn-text" : ""}">${signed(r.change_1d, (x) => pct(x))}</td>
+    <td class="${r.above_trend ? "" : "warn-text"}">${signed(r.pct_vs_sma200, (x) => pct(x))}</td>
+    <td>${signed(r.momentum_12_1, (x) => pct(x))}</td>
+    <td>${r.rsi2 ?? "—"}${r.rsi2_signal ? " ◆" : ""}</td>
+    <td>${money(r.stop_if_bought)}</td>
+    <td class="left ${cls}">${r.status.startsWith("BUY") ? "▶ " : ""}${esc(r.status)}</td></tr>`;
+}
+
+function drawScanDetail() {
+  const box = $("#scan-detail");
+  const r = scanData?.rows.find((x) => x.symbol === scanSel);
+  if (!box || !r || !r.available) return;
+  const s = r.series;
+  const series = {
+    price: s.dates.map((d, i) => [d, s.close[i]]),
+    "200-day avg": s.dates.map((d, i) => [d, s.sma200[i]]).filter((p) => p[1] != null),
+  };
+  if (r.stop_if_bought) series["stop if bought"] = s.dates.slice(-60).map((d) => [d, r.stop_if_bought]);
+  box.innerHTML = `<h2>${esc(r.symbol)} · LAST YEAR</h2>
+    <div class="chart" id="scan-chart"><div class="tooltip"></div></div>
+    <div class="legend" id="scan-legend"></div>
+    <div class="verdict">${verdict(r)}</div>`;
+  lineChart($("#scan-chart"), series, { styles: SCAN_STYLES, legend: $("#scan-legend"), decimals: 2, endDecimals: 2,
+    shortNames: { price: "px", "200-day avg": "200d", "stop if bought": "stop" },
+    label: `${r.symbol} price and 200-day average` });
+}
+
+function verdict(r) {
+  const n = scanData.top_n, lines = [];
+  if (r.sma200 == null) lines.push(`NOT ENOUGH HISTORY FOR A 200-DAY AVERAGE YET (${r.history_days} DAYS).`);
+  else lines.push(r.above_trend
+    ? `TREND: UP. CLOSE IS ${pct(r.pct_vs_sma200)} ABOVE ITS 200-DAY AVERAGE.`
+    : `TREND: DOWN. CLOSE IS ${pct(-r.pct_vs_sma200)} BELOW ITS 200-DAY AVERAGE. THE BOT WON'T BUY IT.`);
+  if (r.rank != null) lines.push(`MOMENTUM: RANK ${r.rank} OF ${scanData.rows.filter((x) => x.rank).length} (${signed(r.momentum_12_1, (x) => pct(x))} OVER 12 MONTHS, SKIPPING THE LAST ONE).`);
+  if (r.status === "BUY CANDIDATE") lines.push(`▶ IN THE TOP ${n} AND ABOVE TREND: THE BOT WOULD BUY IT AT THE NEXT REBALANCE (≈ ${scanData.next_rebalance}) IF THAT IS STILL TRUE THEN.`);
+  else if (r.status.startsWith("CANDIDATE")) lines.push("▶ WOULD QUALIFY, BUT THE MARKET FILTER IS OFF, SO NO NEW BUYS.");
+  else if (r.above_trend && r.rank) lines.push(`NOT IN THE TOP ${n}, SO THE MOMENTUM STRATEGY WOULDN'T HOLD IT RIGHT NOW.`);
+  if (r.stop_if_bought) lines.push(`IF BOUGHT AT ${money(r.close)}, THE HARD STOP WOULD SIT AT ${money(r.stop_if_bought)} (2× ATR ${money(r.atr14)} BELOW).`);
+  if (r.rsi2_signal) lines.push(`◆ RSI-2 IS ${r.rsi2}: A PULLBACK SIGNAL FOR THE RSI-2 STRATEGY (NOT THE DEFAULT).`);
+  return lines.map((l) => `<div>&gt; ${esc(l)}</div>`).join("");
+}
+
 /* ---- INV ------------------------------------------------------------------------- */
 function renderInv(s) {
   const meta = s.state.positions || {};
@@ -211,7 +300,7 @@ function renderData(b) {
         <div class="seg" role="group" aria-label="Period">
           <button data-period="build" aria-pressed="${dataPeriod === "build"}">BUILD</button>
           <button data-period="test" aria-pressed="${dataPeriod === "test"}">TEST</button></div></div>
-      <div class="chart" id="chart"><div class="tooltip" id="tip"></div></div>
+      <div class="chart" id="chart"><div class="tooltip"></div></div>
       <div class="legend" id="legend"></div>
       <div class="sub">START = 100 · ${esc(m.data_note)} · GENERATED ${esc(m.generated)}</div>
     </div>
@@ -226,25 +315,32 @@ function renderData(b) {
   el.querySelectorAll("[data-period]").forEach((btn) => btn.addEventListener("click", () => {
     dataPeriod = btn.dataset.period; store.set("period", dataPeriod); renderData(b);
   }));
-  lineChart($("#chart"), b.curves[dataPeriod] || {});
+  lineChart($("#chart"), b.curves[dataPeriod] || {}, DATA_CHART);
   lastBacktest = b;
 }
 
 let lastBacktest = null, resizeTimer = 0;
 window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => { if (lastBacktest?.available) lineChart($("#chart"), lastBacktest.curves[dataPeriod] || {}); }, 150);
+  resizeTimer = setTimeout(() => { drawScanDetail(); if (lastBacktest?.available) lineChart($("#chart"), lastBacktest.curves[dataPeriod] || {}, DATA_CHART); }, 150);
 });
 
-function swatch(name) {
-  const s = SERIES[name];
+const DATA_CHART = { get legend() { return $("#legend"); }, baseline: 100 };
+
+function swatch(name, styles = SERIES) {
+  const s = styles[name];
   if (!s) return "";
   return `<span class="swatch" style="border-top-color:${cssVar(s.color)};border-top-style:${s.dash ? "dashed" : "solid"}"></span>`;
 }
 
-function lineChart(host, seriesMap) {
+/* Line chart with end labels and a hover crosshair. `opts`:
+   styles: {name: {color, dash}}  legend: element  baseline: y value to emphasise
+   label: aria label  decimals: tooltip/end-label precision */
+function lineChart(host, seriesMap, opts = {}) {
+  const styles = opts.styles || SERIES;
+  const dec = opts.decimals ?? 1;
   const names = Object.keys(seriesMap);
-  const tip = $("#tip", host);
+  const tip = host.querySelector(".tooltip");
   host.querySelector("svg")?.remove();
   if (!names.length) { host.insertAdjacentHTML("afterbegin", '<div class="empty">NO CURVES</div>'); return; }
   // Draw at the container's real width so text stays legible on phones.
@@ -266,15 +362,28 @@ function lineChart(host, seriesMap) {
     grid += `<line class="grid-line" x1="${ml}" x2="${ml + iw}" y1="${sy(v)}" y2="${sy(v)}"/><text class="axis-text" x="${ml - 8}" y="${sy(v) + 4}" text-anchor="end">${+v.toFixed(1)}</text>`;
   }
   const yStart = new Date(x0).getUTCFullYear(), yEnd = new Date(x1).getUTCFullYear();
-  for (let yr = yStart + 1; yr <= yEnd; yr++) {
-    const x = sx(Date.UTC(yr, 0, 1));
-    if (narrow && (yr - yStart) % 2 === 0 && yEnd - yStart > 4) continue;
-    grid += `<text class="axis-text" x="${x}" y="${H - 6}" text-anchor="middle">${yr}</text>`;
+  if (x1 - x0 > 2 * 365 * 864e5) {
+    for (let yr = yStart + 1; yr <= yEnd; yr++) {
+      const x = sx(Date.UTC(yr, 0, 1));
+      if (narrow && (yr - yStart) % 2 === 0 && yEnd - yStart > 4) continue;
+      grid += `<text class="axis-text" x="${x}" y="${H - 6}" text-anchor="middle">${yr}</text>`;
+    }
+  } else {  // short spans: month ticks
+    const MON = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+    const d = new Date(x0); let y = d.getUTCFullYear(), m = d.getUTCMonth() + 1;
+    for (let i = 0; ; i++, m++) {
+      if (m > 11) { m = 0; y++; }
+      const t = Date.UTC(y, m, 1);
+      if (t > x1) break;
+      if (i % (narrow ? 3 : 2)) continue;
+      grid += `<text class="axis-text" x="${sx(t)}" y="${H - 6}" text-anchor="middle">${m === 0 ? y : MON[m]}</text>`;
+    }
   }
-  if (y0 < 100 && y1 > 100) grid += `<line x1="${ml}" x2="${ml + iw}" y1="${sy(100)}" y2="${sy(100)}" stroke="${cssVar("--line-strong")}" stroke-width="1.5"/>`;
+  const base = opts.baseline;
+  if (base != null && y0 < base && y1 > base) grid += `<line x1="${ml}" x2="${ml + iw}" y1="${sy(base)}" y2="${sy(base)}" stroke="${cssVar("--line-strong")}" stroke-width="1.5"/>`;
 
   const lines = parsed.map((s) => {
-    const st = SERIES[s.name] || { color: "--fg-dim", dash: "" };
+    const st = styles[s.name] || { color: "--fg-dim", dash: "" };
     const d = s.pts.map((p, i) => `${i ? "L" : "M"}${sx(p[0]).toFixed(1)},${sy(p[1]).toFixed(1)}`).join("");
     return `<path d="${d}" fill="none" stroke="${cssVar(st.color)}" stroke-width="2" stroke-dasharray="${st.dash}" stroke-linejoin="round" stroke-linecap="round"/>`;
   }).join("");
@@ -282,18 +391,18 @@ function lineChart(host, seriesMap) {
   // End labels, pushed apart so they never overlap.
   const ends = parsed.map((s) => ({ name: s.name, v: s.pts.at(-1)[1], y: sy(s.pts.at(-1)[1]) })).sort((a, b) => a.y - b.y);
   for (let i = 1; i < ends.length; i++) ends[i].y = Math.max(ends[i].y, ends[i - 1].y + 15);
-  const short = (n) => (narrow ? n.replace("buy & hold SPY", "SPY") : n);
-  const labels = ends.map((e) => `<text class="end-label" x="${ml + iw + 8}" y="${e.y + 4}">${esc(short(e.name))} ${e.v.toFixed(0)}</text>`).join("");
+  const short = (n) => (narrow ? (opts.shortNames?.[n] ?? n.replace("buy & hold SPY", "SPY")) : n);
+  const labels = ends.map((e) => `<text class="end-label" x="${ml + iw + 8}" y="${e.y + 4}">${esc(short(e.name))} ${e.v.toFixed(opts.endDecimals ?? 0)}</text>`).join("");
 
-  host.insertAdjacentHTML("afterbegin", `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Equity curves, start = 100">
+  host.insertAdjacentHTML("afterbegin", `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.label || "Equity curves, start = 100")}">
     ${grid}${lines}${labels}
-    <line class="xhair" id="xhair" y1="${mt}" y2="${mt + ih}" visibility="hidden"/>
-    <g id="dots"></g>
-    <rect x="${ml}" y="${mt}" width="${iw}" height="${ih}" fill="transparent" id="hit"/></svg>`);
+    <line class="xhair" y1="${mt}" y2="${mt + ih}" visibility="hidden"/>
+    <g class="dots"></g>
+    <rect class="hit" x="${ml}" y="${mt}" width="${iw}" height="${ih}" fill="transparent"/></svg>`);
 
-  $("#legend").innerHTML = names.map((n) => `<span>${swatch(n)}${esc(n)}</span>`).join("");
+  if (opts.legend) opts.legend.innerHTML = names.map((n) => `<span>${swatch(n, styles)}${esc(n)}</span>`).join("");
 
-  const svg = host.querySelector("svg"), hit = $("#hit", svg), xh = $("#xhair", svg), dots = $("#dots", svg);
+  const svg = host.querySelector("svg"), hit = $(".hit", svg), xh = $(".xhair", svg), dots = $(".dots", svg);
   const ref = parsed.reduce((a, b) => (b.pts.length > a.pts.length ? b : a));
   const move = (ev) => {
     const box = svg.getBoundingClientRect();
@@ -307,9 +416,9 @@ function lineChart(host, seriesMap) {
     for (const s of parsed) {
       const p = s.pts.find((q) => q[0] === when);
       if (!p) continue;
-      const st = SERIES[s.name] || { color: "--fg-dim" };
+      const st = styles[s.name] || { color: "--fg-dim" };
       ds += `<circle cx="${x}" cy="${sy(p[1])}" r="4" fill="${cssVar("--bg")}" stroke="${cssVar(st.color)}" stroke-width="2"/>`;
-      rows += `<div class="row"><span>${swatch(s.name)}${esc(s.name)}</span><span>${p[1].toFixed(1)}</span></div>`;
+      rows += `<div class="row"><span>${swatch(s.name, styles)}${esc(s.name)}</span><span>${p[1].toFixed(dec)}</span></div>`;
     }
     dots.innerHTML = ds;
     tip.innerHTML = `<div class="label">${new Date(when).toISOString().slice(0, 10)}</div>${rows}`;
@@ -384,15 +493,17 @@ function selectTab(name) {
   document.querySelectorAll("button.tab").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
   document.querySelectorAll("main > section").forEach((s) => { s.hidden = s.id !== `tab-${name}`; });
   store.set("tab", name);
-  if (name === "data" && lastBacktest?.available) lineChart($("#chart"), lastBacktest.curves[dataPeriod] || {});
+  if (name === "data" && lastBacktest?.available) lineChart($("#chart"), lastBacktest.curves[dataPeriod] || {}, DATA_CHART);
+  if (name === "scan") drawScanDetail();
 }
 
 async function refresh(first = false) {
   try {
-    const [summary, backtest, trades, decisions] = await Promise.all([
+    const [summary, backtest, trades, decisions, sc] = await Promise.all([
       getJSON("/api/summary"), getJSON("/api/backtest"), getJSON("/api/trades"), getJSON("/api/decisions?limit=300"),
+      getJSON("/api/scan"),
     ]);
-    renderStat(summary); renderInv(summary); renderTrades(trades); renderLog(decisions);
+    renderStat(summary); renderInv(summary); renderTrades(trades); renderLog(decisions); renderScan(sc);
     if (first || !$("#chart svg")) renderData(backtest);
     if (first) boot(summary);
   } catch (e) {

@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import date, timedelta
 
 from bot.config import ConfigError, load_config, load_paper_keys
+from bot.data import AlpacaData, read_cached_bars
 from bot.dashboard.server import DashboardData, broker_account_fn, make_server
 
 
@@ -20,17 +22,23 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     cfg = load_config(args.config)
+    cache_dir = cfg.resolve(cfg.data["cache_dir"])
+    symbols = list(cfg.symbols)
     account_fn = None
+    # Without keys, the SCAN tab uses prices cached by the last backtest.
+    bars_fn = lambda: read_cached_bars(cache_dir, cfg.data["history_feed"], symbols)  # noqa: E731
     if not args.no_broker:
         try:
             from bot.broker import AlpacaPaperBroker
 
             key, secret = load_paper_keys()
             account_fn = broker_account_fn(AlpacaPaperBroker(cfg, key, secret))
+            data = AlpacaData(key, secret, cache_dir, cfg.data["history_feed"], cfg.data["latest_feed"])
+            bars_fn = lambda: data.get_daily_bars(symbols, date.today() - timedelta(days=600))  # noqa: E731
         except ConfigError as e:
             print(f"No broker link: {e}", file=sys.stderr)
 
-    server = make_server(DashboardData(cfg, account_fn), args.port)
+    server = make_server(DashboardData(cfg, account_fn, bars_fn), args.port)
     print(f"Dashboard (read-only) at http://127.0.0.1:{args.port}  — Ctrl+C to stop")
     try:
         server.serve_forever()

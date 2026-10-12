@@ -89,6 +89,16 @@ class AlpacaData:
         return float(trade.price) if trade else None
 
 
+def read_cached_bars(cache_dir: Path, feed: str, symbols: list[str]) -> dict[str, pd.DataFrame]:
+    """Bars already downloaded by an earlier run (no network, no keys)."""
+    out = {}
+    for sym in symbols:
+        p = Path(cache_dir) / f"{sym}_{feed}.csv"
+        if p.exists():
+            out[sym] = pd.read_csv(p, index_col=0, parse_dates=True)
+    return out
+
+
 def synthetic_bars(symbols: list[str], start: date, end: date, seed: int = 7) -> dict[str, pd.DataFrame]:
     """Random-walk bars for tests and offline demos. Results on this data mean
     nothing about real markets."""

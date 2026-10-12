@@ -176,3 +176,10 @@ footer { margin-top: 26px; color: var(--muted); font-size: 12px; text-shadow: no
   .feed .line { grid-template-columns: 1fr; gap: 0; }
   button.tab { font-size: 20px; padding: 0 9px; }
 }
+
+/* ---- scan ------------------------------------------------------------------ */
+tr.pick { cursor: pointer; }
+tr.pick:focus-visible { outline: 1px solid var(--fg); outline-offset: -1px; }
+tr.pick.selected td { background: rgba(92, 255, 138, .12); }
+tr.pick.selected td:first-child { box-shadow: inset 3px 0 0 var(--fg); }
+.verdict { margin-top: 10px; font-size: 14px; line-height: 1.7; color: var(--fg); }
